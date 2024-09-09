@@ -39,7 +39,6 @@ from accelerate import Accelerator
 from accelerate.logging import get_logger
 from accelerate.utils import ProjectConfiguration, set_seed
 from datasets import load_dataset
-from huggingface_hub import create_repo, upload_folder
 from packaging import version
 from peft import LoraConfig
 from peft.utils import get_peft_model_state_dict
@@ -52,7 +51,6 @@ from diffusers import AutoencoderKL, DDPMScheduler, DiffusionPipeline, StableDif
 from diffusers.optimization import get_scheduler
 from diffusers.training_utils import cast_training_params, compute_snr
 from diffusers.utils import check_min_version, convert_state_dict_to_diffusers, is_wandb_available
-from diffusers.utils.hub_utils import load_or_create_model_card, populate_model_card
 from diffusers.utils.import_utils import is_xformers_available
 from diffusers.utils.torch_utils import is_compiled_module
 
@@ -64,47 +62,6 @@ if is_wandb_available():
 check_min_version("0.31.0.dev0")
 
 logger = get_logger(__name__, log_level="INFO")
-
-
-def save_model_card(
-    repo_id: str,
-    images: list = None,
-    base_model: str = None,
-    dataset_name: str = None,
-    repo_folder: str = None,
-):
-    img_str = ""
-    if images is not None:
-        for i, image in enumerate(images):
-            image.save(os.path.join(repo_folder, f"image_{i}.png"))
-            img_str += f"![img_{i}](./image_{i}.png)\n"
-
-    model_description = f"""
-# LoRA text2image fine-tuning - {repo_id}
-These are LoRA adaption weights for {base_model}. The weights were fine-tuned on the {dataset_name} dataset. You can find some example images in the following. \n
-{img_str}
-"""
-
-    model_card = load_or_create_model_card(
-        repo_id_or_path=repo_id,
-        from_training=True,
-        license="creativeml-openrail-m",
-        base_model=base_model,
-        model_description=model_description,
-        inference=True,
-    )
-
-    tags = [
-        "stable-diffusion",
-        "stable-diffusion-diffusers",
-        "text-to-image",
-        "diffusers",
-        "diffusers-training",
-        "lora",
-    ]
-    model_card = populate_model_card(model_card, tags=tags)
-
-    model_card.save(os.path.join(repo_folder, "README.md"))
 
 
 def log_validation(
@@ -345,7 +302,6 @@ def parse_args():
     parser.add_argument("--adam_weight_decay", type=float, default=1e-2, help="Weight decay to use.")
     parser.add_argument("--adam_epsilon", type=float, default=1e-08, help="Epsilon value for the Adam optimizer")
     parser.add_argument("--max_grad_norm", default=1.0, type=float, help="Max gradient norm.")
-    parser.add_argument("--push_to_hub", action="store_true", help="Whether or not to push the model to the Hub.")
     parser.add_argument("--hub_token", type=str, default=None, help="The token to use to push to the Model Hub.")
     parser.add_argument(
         "--prediction_type",
@@ -489,10 +445,6 @@ def main():
         if args.output_dir is not None:
             os.makedirs(args.output_dir, exist_ok=True)
 
-        if args.push_to_hub:
-            repo_id = create_repo(
-                repo_id=args.hub_model_id or Path(args.output_dir).name, exist_ok=True, token=args.hub_token
-            ).repo_id
     # Load scheduler, tokenizer and models.
     noise_scheduler = DDPMScheduler.from_pretrained(args.pretrained_model_name_or_path, subfolder="scheduler")
     tokenizer = CLIPTokenizer.from_pretrained(
@@ -962,20 +914,6 @@ def main():
             # run inference
             images = log_validation(pipeline, args, accelerator, epoch, is_final_validation=True)
 
-        if args.push_to_hub:
-            save_model_card(
-                repo_id,
-                images=images,
-                base_model=args.pretrained_model_name_or_path,
-                dataset_name=args.dataset_name,
-                repo_folder=args.output_dir,
-            )
-            upload_folder(
-                repo_id=repo_id,
-                folder_path=args.output_dir,
-                commit_message="End of training",
-                ignore_patterns=["step_*", "epoch_*"],
-            )
 
     accelerator.end_training()
 
